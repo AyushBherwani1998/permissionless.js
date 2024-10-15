@@ -13,7 +13,7 @@ import {
     hashMessage,
     hashTypedData
 } from "viem"
-import { getChainId, signMessage } from "viem/actions"
+import { getChainId, readContract, signMessage } from "viem/actions"
 import { getAccountNonce } from "../../actions/public/getAccountNonce"
 
 import {
@@ -26,10 +26,41 @@ import {
     toSmartAccount
 } from "viem/account-abstraction"
 import { getAction } from "viem/utils"
-import { getSenderAddress } from "../../actions/public/getSenderAddress"
 import { toOwner } from "../../utils/toOwner"
 import { encodeCallData } from "./utils/encodeCallData"
 import { getFactoryData } from "./utils/getFactoryData"
+
+export const getAddressAbi = [     
+    {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "_verificationFacet",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes",
+            "name": "_owner",
+            "type": "bytes"
+          },
+          {
+            "internalType": "uint256",
+            "name": "_salt",
+            "type": "uint256"
+          }
+        ],
+        "name": "getAddress",
+        "outputs": [
+          {
+            "internalType": "address",
+            "name": "barzAddress",
+            "type": "address"
+          }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+      }
+] as const
 
 async function _signTypedData(
     signer: LocalAccount,
@@ -65,6 +96,31 @@ export const TRUST_ADDRESSES: {
         "0x81b9E3689390C7e74cF526594A105Dea21a8cdD5",
     factoryAddress: "0x729c310186a57833f622630a16d13f710b83272a"
 }
+
+const getAccountAddress = async ({
+    verificationFacetAddress,
+    owner,
+    factoryAddress,
+    index,
+    client,
+}: {
+    client: Client
+    owner: Address
+    factoryAddress: Address
+    index: bigint
+    verificationFacetAddress: Address
+}): Promise<Address> => {
+    // Retrieve the barz address
+    const address = await readContract(client, {
+        abi: getAddressAbi,
+        address: factoryAddress,
+        functionName: "getAddress",
+        args: [verificationFacetAddress, owner, index]
+    })
+
+    return address
+}
+
 
 export type ToTrustSmartAccountParameters = {
     client: Client
@@ -154,14 +210,13 @@ export async function toTrustSmartAccount(
         getFactoryArgs,
         async getAddress() {
             if (accountAddress) return accountAddress
-
-            const { factory, factoryData } = await getFactoryArgs()
-
-            // Get the sender address based on the init code
-            accountAddress = await getSenderAddress(client, {
-                factory,
-                factoryData,
-                entryPointAddress: entryPoint.address
+            // Get the sender address from barz factory
+            accountAddress = await getAccountAddress({
+                client,
+                factoryAddress,
+                owner: localOwner.address,
+                index,
+                verificationFacetAddress: secp256k1VerificationFacetAddress,
             })
 
             return accountAddress
